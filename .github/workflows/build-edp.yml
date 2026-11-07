@@ -1,0 +1,89 @@
+name: Build Iris Xe diagnostic kext
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: macos-15-intel
+    timeout-minutes: 20
+    steps:
+      - name: Read this build recipe
+        uses: actions/checkout@v4
+        with:
+          path: recipe
+          persist-credentials: false
+
+      - name: Read pinned WhateverXe source
+        uses: actions/checkout@v4
+        with:
+          repository: b00t0x/WhateverXe
+          ref: d0b7fb6275ca51fde088fa7e91595462bd457ec9
+          path: source
+          persist-credentials: false
+
+      - name: Read pinned MacKernelSDK
+        uses: actions/checkout@v4
+        with:
+          repository: acidanthera/MacKernelSDK
+          ref: 05094e5e88cec7caedbfb35e8449ed0db94bf95b
+          path: source/MacKernelSDK
+          persist-credentials: false
+
+      - name: Read matching Lilu development files
+        uses: actions/checkout@v4
+        with:
+          repository: acidanthera/Lilu
+          ref: 1.7.2
+          path: source/build/dependencies/Lilu
+          persist-credentials: false
+
+      - name: Verify and apply diagnostic patch
+        working-directory: source
+        run: |
+          python3 ../recipe/verify-inputs.py
+          git apply --check ../recipe/edp-trace.patch
+          git apply ../recipe/edp-trace.patch
+          python3 ../recipe/verify-inputs.py --patched
+
+      - name: Prepare Lilu headers and library sources
+        working-directory: source
+        run: |
+          mkdir -p Lilu.kext/Contents/Resources
+          ln -s "$GITHUB_WORKSPACE/source/build/dependencies/Lilu/Lilu/Headers" Lilu.kext/Contents/Resources/Headers
+          ln -s "$GITHUB_WORKSPACE/source/build/dependencies/Lilu/Lilu/Library" Lilu.kext/Contents/Resources/Library
+
+      - name: Build native x86_64 kext and check boot stack
+        working-directory: source
+        run: python3 tools/build.py --release --output build/EDPTRACE
+
+      - name: Package build results
+        working-directory: source
+        run: |
+          mkdir -p build/delivery
+          ditto -c -k --keepParent build/EDPTRACE/WhateverXe.kext build/delivery/WhateverXe-0.7.0-eDP-trace.kext.zip
+          cp build/EDPTRACE/build-manifest.json build/EDPTRACE/boot-stack.json LICENSE.txt build/delivery/
+          cd build/delivery
+          shasum -a 256 WhateverXe-0.7.0-eDP-trace.kext.zip build-manifest.json boot-stack.json LICENSE.txt > SHA256SUMS
+
+      - name: Save compiled kext and validation
+        uses: actions/upload-artifact@v4
+        with:
+          name: IrisXe-eDP-diagnostic-build
+          path: source/build/delivery/*
+          if-no-files-found: error
+          retention-days: 7
+
+      - name: Save available build diagnostics
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: IrisXe-build-diagnostics
+          path: |
+            source/build/EDPTRACE/boot-stack.json
+            source/build/EDPTRACE/**/*.su
+          if-no-files-found: ignore
+          retention-days: 7
