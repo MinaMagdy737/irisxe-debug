@@ -1,14 +1,14 @@
 {
-  "patch_sha256": "939716e0939866ddb7a7f60bb9f31fd01c899652eb509682641cf0533ace0763",
+  "patch_sha256": "6e2e24807ff15632b14dc296677ca5e1379c3bee0bf3bded990829bb3f011136",
   "base_sha256": {
     "kern_xe.cpp": "742cf522e033a4a455ef6178aa9f7bcc0e6e7b9706625325aa601f0acd3c4e73",
     "kern_xe.hpp": "ee6ce72504f404ed0f22df3edc09e15de9844659f47d9f024d1395bffb2d1423",
     "kern_alderlake_n.hpp": "45b39282c3677df001a90a9a2e9fdb546c0a1a8fe5f1753fd931c2d066a4d508"
   },
   "patched_sha256": {
+    "kern_xe.cpp": "f3774f750bafaf5acc1b7000dc531ec498ced017c63d88266b236e9930e6370a",
+    "kern_xe.hpp": "4896e91fa41ecf1464f54df2f034335d842b24698ff028d0781318b1b2c772f2",
     "kern_alderlake_n.hpp": "9908d16bfa262887c3bcfdd06aaf70bcb9038280e12321f75f9a4e5c6ccb5c36",
-    "kern_edp_trace.hpp": "62666a254a2e4322f54e2a7ad58427b360934832bdad2c58a53cf742adbca1bc",
-    "kern_xe.cpp": "c718ed702d8dab70717aedd584403872d5c367e7528f5189a06107df80647802",
-    "kern_xe.hpp": "7bf419d994aa0ccdd10c761dfce8eadd8cd86f904b30055b257563d33cb73570"
+    "kern_edp_trace.hpp": "62666a254a2e4322f54e2a7ad58427b360934832bdad2c58a53cf742adbca1bc"
   }
 }

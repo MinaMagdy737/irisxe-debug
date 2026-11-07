@@ -1,11 +1,11 @@
 --- a/WhateverXe/kern_xe.cpp
 +++ b/WhateverXe/kern_xe.cpp
-@@ -7544,17 +7544,31 @@
+@@ -7544,17 +7544,53 @@
  
  // Called with the display owner lock held. The native caller owns the port;
  // require its retained platform record and BAR association before sampling it.
 -uint8_t *XE::display13SSTPort(void *port) {
-+uint8_t *XE::display13SSTPort(void *port,WEXEDPTrace::Capture *trace) {
++uint8_t *XE::display13SSTPort(void *port,WEXEDPTrace::Capture *trace,bool bootAdoption) {
   auto s=callbackXE;auto &c=display13FBPower;auto object=static_cast<OSObject *>(port);
 - if(!s->display13FramebufferRequested || s->xeProfile.display!=XELP::Display::XeLPD || !s->display13FBSSTHooksReady ||
 -    !object || object->getMetaClass()->getClassSize()<0x624 || !c.controller ||
@@ -32,16 +32,38 @@
 + if(!WEXEDPTrace::good(trace,120,(Display13FBTopology::selected(s->adlnPlatform,config,s->adlnOutputWiring))) ||
 +       !WEXEDPTrace::good(trace,121,((s->adlnOutputWiring.links()&(1U<<config[0]))!=0)) ||
 +       !WEXEDPTrace::good(trace,122,(!p[0x117])) ||
-+       !WEXEDPTrace::equal(trace,123,Display13FBMemory::field<uint32_t>(p,0x120),config[0]) ||
-+       !WEXEDPTrace::equal(trace,124,Display13FBMemory::field<uint32_t>(p,0x550),(config[0]>=3?((s->adlnOutputWiring.typeC&(1U<<config[0]))?3U:4U):1U)) ||
-+       !WEXEDPTrace::good(trace,125,(Display13FBMemory::field<void *>(p,0x578)==c.access)))return nullptr;
++       !WEXEDPTrace::equal(trace,123,Display13FBMemory::field<uint32_t>(p,0x120),config[0]))return nullptr;
++ // +550 is the current native software mode, not the connector type.
++ // SetupWorkLoop adopts the already-active GOP before native port probing.
++ // Permit its unselected mode only at that one call and only while the
++ // selected Combo eDP's protected boot AUX lease still belongs to this bridge.
++ // This grants no ordinary AUX/training operation: their calls use the default
++ // bootAdoption=false. Never write a fabricated active native mode here.
++ const auto ddi=config[0];
++ const auto nativeMode=Display13FBMemory::field<uint32_t>(p,0x550);
++ const auto activeMode=ddi>=3?((s->adlnOutputWiring.typeC&(1U<<ddi))?3U:4U):1U;
++ const bool bootMode0=bootAdoption && nativeMode==0 && ddi<2 &&
++  (s->adlnOutputWiring.panel&(1U<<ddi)) && c.bootPanel && c.bootDP &&
++  c.bridge.begun && c.bridge.state.ready && !c.bridge.state.faulted && !c.bridge.state.suspended &&
++  ddi==c.bridge.bootPort && !c.bridge.bootAdopted && !c.bridge.bootPath &&
++  c.bridge.bootPGProtected && c.bridge.bootDDIProtected &&
++  c.mainLink[ddi].bootPending && !c.mainLink[ddi].owner && c.mainLink[ddi].port==ddi &&
++  c.mainLink[ddi].lease.owner==&c.bridge.state &&
++  c.mainLink[ddi].lease.domains==Display13Power::dependencies(Display13Power::auxDomain(ddi));
++ WEXEDPTrace::observed(trace,150,bootAdoption);
++ WEXEDPTrace::observed(trace,151,bootMode0);
++ if(!WEXEDPTrace::equal(trace,124,nativeMode,bootMode0?0U:activeMode) ||
++    !WEXEDPTrace::good(trace,125,(Display13FBMemory::field<void *>(p,0x578)==c.access)))return nullptr;
++ // The handoff caller still runs unchanged live-source, power and lease
++ // validation in adoptDPBootAUX before any boot-path ownership transfer.
++
 + WEXEDPTrace::observed(trace,140,config[0]);
 + WEXEDPTrace::observed(trace,141,Display13FBMemory::field<uint32_t>(p,0x120));
 + WEXEDPTrace::observed(trace,142,Display13FBMemory::field<uint32_t>(p,0x550));
   return p;
  }
  
-@@ -8373,6 +8387,9 @@
+@@ -8373,6 +8409,9 @@
  void XE::wrapAlderLakeNSetupWorkLoop(IOService *controller,IOWorkLoop *workLoop) {
  	FunctionCast(wrapAlderLakeNSetupWorkLoop,callbackXE->orgAlderLakeNSetupWorkLoop)(controller,workLoop);
  	auto &c=display13FBPower;if(!c.lock)return;
@@ -51,12 +73,12 @@
  	auto pciOwner=controller ? OSDynamicCast(IOPCIDevice,controller->getProvider()) : nullptr;
  	auto irqSource=controller ? OSDynamicCast(IOFilterInterruptEventSource,
  		Display13FBMemory::field<OSObject *>(controller,0xE20)) : nullptr;
-@@ -8481,19 +8498,25 @@
+@@ -8481,19 +8520,25 @@
                  const auto ddi=c.bridge.bootPort;
                  const bool dp=ddi<7 && (callbackXE->adlnOutputWiring.links()&(1U<<ddi));
                  bool linked=!dp;
 -                if(dp && display13SSTPort(port)) {
-+                if(dp && display13SSTPort(port,trace)) {
++                if(dp && display13SSTPort(port,trace,true)) {
                      Display13FBBootIO io{c.map};auto &boot=c.displayScratch;AlderLakeN::readDisplay(io,true,boot);
 +                    // Copy the already collected adoption view; issue no new register reads.
 +                    WEXEDPTrace::observed(trace,300,boot.activePipes);
@@ -79,7 +101,7 @@
                  if(linked)result=c.bridge.adoptBootPath(reinterpret_cast<uintptr_t>(path),0,ddi);
                  else result.status=Display13Power::Status::NotReady;
              }
-@@ -8508,7 +8531,19 @@
+@@ -8508,7 +8553,19 @@
  	IOLockUnlock(c.lock);
  	if(result.status!=Display13Power::Status::Complete && adlnIRQOwner(controller))wrapDisplay13FBDisableIRQ(controller);
  	adlnPublishPowerRecord("N97FBBootHandoff",record);
@@ -100,7 +122,7 @@
  }
  
  bool XE::wrapAlderLakeNScanoutAllocate(IOService *fb) {
-@@ -13287,13 +13322,22 @@
+@@ -13287,13 +13344,22 @@
   // Always restore the workaround before releasing our PG, also after failed on.
   const bool restored=!owned || gate.finish(io);
   bool ok=ready && restored;
@@ -138,7 +160,7 @@
   static bool display13DeferClock(void *access,uint64_t reg,uint32_t value,uintptr_t caller);
  
 - static uint8_t *display13SSTPort(void *port);
-+ static uint8_t *display13SSTPort(void *port,WEXEDPTrace::Capture *trace=nullptr);
++ static uint8_t *display13SSTPort(void *port,WEXEDPTrace::Capture *trace=nullptr,bool bootAdoption=false);
   static bool display13HDMIPort(void *port);
   static uint32_t wrapDisplay13TrainingPattern(void *path,uint32_t pattern);
   static uint32_t wrapDisplay13SignalLevels(void *port,uint32_t swing,uint32_t emphasis,void *overrideConfig);
